@@ -22,14 +22,13 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'STF.html'));
 });
 
-// Database Connection (Local MongoDB for Compass)
-const MONGODB_URI = "mongodb://127.0.0.1:27017/stranger_to_friends";
-
-
+// Database Connection — Uses Atlas (MONGODB_URI env var) on Render, falls back to local for dev
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/stranger_to_friends";
 
 mongoose.connect(MONGODB_URI)
     .then(async () => {
-        console.log("✅ SUCCESS: Connected to Cloud MongoDB!");
+        const dbType = process.env.MONGODB_URI ? "☁️ MongoDB Atlas" : "💻 Local MongoDB";
+        console.log(`✅ SUCCESS: Connected to ${dbType}!`);
         const stats = ['bloodRequests', 'livesSaved'];
         for (const key of stats) {
             await Stats.findOneAndUpdate({ key }, { $setOnInsert: { value: 0 } }, { upsert: true });

@@ -1,4 +1,4 @@
-const BASE_URL = window.location.origin + '/api';
+const BASE_URL = (window.location.origin.startsWith('http') ? window.location.origin : 'http://localhost:5000') + '/api';
 
 // Global Socket and Call Handling
 let socket;
@@ -25,6 +25,11 @@ if (typeof io !== 'undefined') {
         }
     });
 
+    socket.on('donorCountUpdate', (count) => {
+        const el = document.getElementById('donorCountDisplay');
+        if (el) el.innerText = count;
+    });
+
     // Global Incoming Call Handler (Premium Red Theme)
     socket.on('incomingCall', (data) => {
         showIncomingCallModal(data);
@@ -33,6 +38,10 @@ if (typeof io !== 'undefined') {
 
 // Fetch initial stats
 fetch(`${BASE_URL}/stats`).then(res => res.json()).then(stats => {
+    if (stats.activeDonors !== undefined) {
+        const el = document.getElementById('donorCountDisplay');
+        if (el) el.innerText = stats.activeDonors;
+    }
     if (stats.bloodRequests) document.getElementById('bloodRequestCount').innerText = stats.bloodRequests;
     if (stats.livesSaved) document.getElementById('livesSavedCount').innerText = stats.livesSaved;
 }).catch(() => {});
