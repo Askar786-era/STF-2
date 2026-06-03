@@ -13,6 +13,93 @@ const io = new Server(server, { cors: { origin: "*" } });
 
 const onlineDonors = {}; 
 
+// SMS Gateway Integration (Fast2SMS & Twilio)
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
+const FAST2SMS_API_KEY = process.env.FAST2SMS_API_KEY;
+
+async function sendSMS(to, body) {
+    // 1. Fast2SMS (Indian Gateway)
+    if (FAST2SMS_API_KEY) {
+        try {
+            let cleanPhone = to.replace(/\D/g, '');
+            if (cleanPhone.length > 10) {
+                cleanPhone = cleanPhone.slice(-10);
+            }
+            
+            const response = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+                method: 'POST',
+                headers: {
+                    'authorization': FAST2SMS_API_KEY,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    route: 'q',
+                    message: body,
+                    flash: 0,
+                    numbers: cleanPhone
+                })
+            });
+            const data = await response.json();
+            if (response.ok && data.return === true) {
+                console.log(`✅ SMS sent successfully via Fast2SMS to ${cleanPhone}`);
+                return { success: true, provider: 'Fast2SMS' };
+            } else {
+                console.error(`❌ Fast2SMS Error:`, data.message || data);
+            }
+        } catch (err) {
+            console.error(`❌ Error in Fast2SMS send:`, err.message);
+        }
+    }
+
+    // 2. Twilio (Global Gateway)
+    if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_PHONE_NUMBER) {
+        try {
+            let formattedPhone = to;
+            if (!formattedPhone.startsWith('+')) {
+                const digits = formattedPhone.replace(/\D/g, '');
+                if (digits.length === 10) {
+                    formattedPhone = '+91' + digits;
+                } else {
+                    formattedPhone = '+' + digits;
+                }
+            }
+
+            const auth = Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64');
+            const params = new URLSearchParams();
+            params.append('To', formattedPhone);
+            params.append('From', TWILIO_PHONE_NUMBER);
+            params.append('Body', body);
+
+            const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Basic ${auth}`,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: params
+            });
+
+            const data = await response.json();
+            if (response.ok) {
+                console.log(`✅ SMS sent successfully via Twilio to ${formattedPhone}`);
+                return { success: true, provider: 'Twilio', sid: data.sid };
+            } else {
+                console.error(`❌ Twilio Error:`, data.message);
+                return { success: false, error: data.message };
+            }
+        } catch (err) {
+            console.error(`❌ Error in Twilio send:`, err.message);
+            return { success: false, error: err.message };
+        }
+    }
+
+    // 3. Fallback to Simulation (if no credentials are set)
+    console.log(`[SMS SIMULATION] To: ${to} | Message: ${body}`);
+    return { success: true, simulated: true };
+}
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static(__dirname));
@@ -70,8 +157,8 @@ io.on('connection', (socket) => {
         if (donor && donor.isOnline && donor.socketId) {
             io.to(donor.socketId).emit('incomingCall', { signal: signalData, from: callerName, callerSocket: socket.id });
         } else if (donor) {
-            // Donor is offline - Send SMS Notification (Simulation)
-            console.log(`[URGENT SMS SIMULATION] To: ${donorPhone} | Message: "URGENT BLOOD ALERT: ${callerName} needs your help! Please log in to Stranger to Friends immediately to accept the call."`);
+            // Donor is offline - Send real SMS Notification
+            await sendSMS(donorPhone, `URGENT BLOOD ALERT: ${callerName} needs your help! Please log in to Stranger to Friends immediately to accept the call.`);
             socket.emit('callError', { message: 'Donor is offline. An urgent SMS notification has been sent to them!' });
         } else {
             socket.emit('callError', { message: 'Donor not found.' });
@@ -119,10 +206,10 @@ app.get('/api/stats', async (req, res) => {
 });
 
 app.post('/api/messages/send', async (req, res) => {
-    console.log(`[SMS SIMULATION] To: ${req.body.donorPhone} | Message: ${req.body.message}`);
+    const result = await sendSMS(req.body.donorPhone, req.body.message);
     const stat = await Stats.findOneAndUpdate({ key: 'livesSaved' }, { $inc: { value: 1 } }, { upsert: true, new: true });
     io.emit('globalStatsUpdate', { livesSaved: stat.value });
-    res.json({ success: true });
+    res.json({ success: true, result });
 });
 
 const PORT = process.env.PORT || 5000;
